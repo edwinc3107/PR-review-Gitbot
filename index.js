@@ -4,6 +4,13 @@ const username = process.argv[3];
 console.log(`Hello, ${username}!`);
 console.log(`Command: ${command}`);
 
+const args = process.argv.slice(4);
+const limitArg = args.find(arg => arg.startsWith("limit="))?.split("=")[1];
+const sortByArg = args.find(arg => arg.startsWith("sort="))?.split("=")[1];
+
+const limit = limitArg ? parseInt(limitArg, 10) : null;
+const sortBy = sortByArg || null;
+
 import { getUserEvents } from "./src/github.js";
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -20,36 +27,6 @@ if (!GITHUB_TOKEN) {
     process.exit(1);
 }
 
-function summarizePR(pr) {
-    // 1. Build title line
-    const prNumber = pr.number ? `PR #${pr.number}` : "PR";
-    const title = pr.title || "(no title)";
-    const titleLine = `${prNumber}: "${title}"`;
-    
-    // 2. Build line changes line (only if data is available)
-    let lineChange = "";
-    if (pr.additions !== undefined && pr.deletions !== undefined) {
-        lineChange = `- Lines changed: +${pr.additions} / -${pr.deletions}`;
-    } else {
-        lineChange = `- Lines changed: (data not available in event)`;
-    }
-    
-    // 3. Build file changes line
-    let fileChange = "";
-    if (pr.changed_files !== undefined) {
-        fileChange = `- Files changed: ${pr.changed_files}`;
-    } else {
-        fileChange = `- Files changed: (data not available in event)`;
-    }
-    
-    // 4. Commit summary (we will fill this in later)
-    const commitSummary = `- Commit messages: (not implemented yet)`;
-    
-    // 5. Combine all
-    const result = `${titleLine}\n${lineChange}\n${fileChange}\n${commitSummary}`;
-    return result;
-}
-
 async function fetchCommitMessages(commitsUrl) {
     const response = await fetch(commitsUrl, { headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json'}
     });
@@ -62,11 +39,10 @@ async function fetchCommitMessages(commitsUrl) {
     return commits.map(commit => commit?.commit?.message.split("\n")[0]);
 }
 
-async function formatEvents(events) {
-    //value = { pr, reviews: [] }
+// First pass: Collect and group PR events and reviews
+function collectPrEvents(events) {
     const prMap = new Map();
-
-    // First pass: collect all PR events and reviews
+    
     events.forEach(event => {
         const { type, payload, repo, created_at } = event;
         if (!repo) return;
@@ -94,7 +70,6 @@ async function formatEvents(events) {
                     reviews: []
                 });
             }
-            
             return;
         }
 
@@ -125,9 +100,67 @@ async function formatEvents(events) {
                 date: date
             });
         }
-    }); 
+    });
+    
+    return prMap;
+}
 
-    // Second pass: fetch full PR data if missing additions/deletions/changed_files
+function computeRegressionRisk(pr) {
+    // Thresholds for regression risk factors
+    const LARGE_DIFF_THRESHOLD = 500; // Large PR threshold
+    const MANY_FILES_THRESHOLD = 10;  // Many files threshold
+    
+    const weights = {
+        largeDiff: 0.40,
+        manyFiles: 0.35,
+        coreChanges: 0.50,
+        noTests: 0.20,
+    };
+  
+    const factors = []; // List of factors that contribute to regression risk
+
+    // Calculate total lines changed
+    const linesChanged = (pr.additions ?? 0) + (pr.deletions ?? 0);
+    const filesChanged = pr.changed_files ?? 0;
+
+    // Check if PR has large diff
+    if (linesChanged > LARGE_DIFF_THRESHOLD) {
+        factors.push(weights.largeDiff);
+    }
+    
+    // Check if PR touches many files
+    if (filesChanged > MANY_FILES_THRESHOLD) {
+        factors.push(weights.manyFiles);
+    }
+    
+    // Check if PR touches core folders (simplified - would need file paths from API)
+    // For now, we'll skip this check as we don't have file paths in the current data
+    // if (prMetrics.touchesCoreFolder) factors.push(weights.coreChanges);
+    
+    // Check if PR has test changes (simplified - would need file paths from API)
+    // For now, we'll skip this check as we don't have file paths in the current data
+    // if (!prMetrics.hasTestChanges) factors.push(weights.noTests);
+  
+    // Use the formula: 1 - Π (1 - weight_i) to calculate the score
+    const product = factors.reduce((acc, w) => acc * (1 - w), 1);
+    const score = 1 - product; // Score between 0 and 1
+  
+    // Determine the category of the regression risk
+    let category;
+    if (score > 0.7) {
+        category = "High regression risk";
+    } else if (score > 0.4) {
+        category = "Medium risk";
+    } else {
+        category = "Low risk";
+    }
+  
+    return { score, category };
+}
+  
+
+// Second pass: Enrich PR data with API calls
+async function enrichPrData(prMap) {
     for (const [key, entry] of prMap) {
         const pr = entry.pr;
         const repoName = entry.repoName;
@@ -147,83 +180,140 @@ async function formatEvents(events) {
         // Fetch commits (only once per PR)
         if (!entry.commitMessages && entry.pr?.commits_url) {
             try {
-                entry.commitMessages = await fetchCommitMessages(entry.pr.commits_url); //fetch url of commits
+                entry.commitMessages = await fetchCommitMessages(entry.pr.commits_url);
             } catch (err) {
                 console.error(`Could not fetch commits for ${repoName}#${pr.number}: ${err.message}`);
                 entry.commitMessages = [];
             }
         }
     }
+}
 
-    // Third pass: format each unique PR with its reviews
-    const summaries = [];
+// Format a single PR entry into a summary object
+function formatSinglePr(entry) {
+    const { pr, repoName, reviews } = entry;
+    const commitMessages = entry.commitMessages || [];
     
-    for (const [key, entry] of prMap) {
-        const { pr, repoName, reviews } = entry;
-        // Build PR summary
-        const prNumber = pr.number ? `PR #${pr.number}` : "PR";
-        const title = pr.title || "(no title)";
-        const titleLine = `${prNumber}: "${title}" (${repoName})`;
-        
-        // PR details
-        let lineChange = "";
-        if (pr.additions !== undefined && pr.deletions !== undefined) {
-            lineChange = `- Lines changed: +${pr.additions} / -${pr.deletions}`;
-        } else {
-            lineChange = `- Lines changed: (data not available in event)`;
-        }
-        
-        let fileChange = "";
-        if (pr.changed_files !== undefined) {
-            fileChange = `- Files changed: ${pr.changed_files}`;
-        } else {
-            fileChange = `- Files changed: (data not available in event)`;
-        }
-        
-        const commitMessages = entry.commitMessages || [];
-        const impact = computeImpactScore({
-            additions: pr.additions,
-            deletions: pr.deletions,
-            changed_files: pr.changed_files,
-            commit_count: commitMessages.length,
-            review_count: reviews.length,
+    // Build PR summary
+    const prNumber = pr.number ? `PR #${pr.number}` : "PR";
+    const title = pr.title || "(no title)";
+    const titleLine = `${prNumber}: "${title}" (${repoName})`;
+    
+    // PR details
+    let lineChange = "";
+    if (pr.additions !== undefined && pr.deletions !== undefined) {
+        lineChange = `- Lines changed: +${pr.additions} / -${pr.deletions}`;
+    } else {
+        lineChange = `- Lines changed: (data not available in event)`;
+    }
+    
+    let fileChange = "";
+    if (pr.changed_files !== undefined) {
+        fileChange = `- Files changed: ${pr.changed_files}`;
+    } else {
+        fileChange = `- Files changed: (data not available in event)`;
+    }
+    
+    // Compute impact and type
+    const impact = computeImpactScore({
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changed_files: pr.changed_files,
+        commit_count: commitMessages.length,
+        review_count: reviews.length,
+    });
+    const prType = typePR(commitMessages);
+    
+    // Format commit messages
+    let commitSummary = "";
+    if (commitMessages.length > 0) {
+        commitSummary = `- Commit messages (${commitMessages.length}):\n`;
+        commitMessages.forEach(message => {
+            commitSummary += `  • ${message}\n`;
         });
-        const prType = typePR(commitMessages);
-        
-        let commitSummary = "";
-        if (commitMessages.length > 0) {
-            commitSummary = `- Commit messages (${commitMessages.length}):\n`;
-            commitMessages.forEach(message => {
-                commitSummary += `  • ${message}\n`;
-            });
-            commitSummary = commitSummary.trimEnd();
-        } else {
-            commitSummary = `- Commit messages: (none retrieved)`;
-        }
-        const impactLine = `- Impact: ${impact.category} (score ${impact.score.toFixed(0)})`;
-        const typeLine = prType ? `- PR type: ${prType}` : "";
-        
-        // Build reviews section
-        let reviewsSection = "";
-        if (reviews.length > 0) {
-            reviewsSection = `- Reviews (${reviews.length}):\n`;
-            reviews.forEach(review => {
-                reviewsSection += `  • ${review.state} by ${review.reviewer} on ${review.date}\n`;
-            });
-            // Remove trailing newline
-            reviewsSection = reviewsSection.trimEnd();
-        } else {
-            reviewsSection = `- Reviews: (none)`;
-        }
-        
-        // Combine everything
-        const summary = [titleLine, lineChange, fileChange, impactLine, typeLine, commitSummary, reviewsSection]
-            .filter(Boolean)
-            .join("\n");
-        summaries.push(summary);
+        commitSummary = commitSummary.trimEnd();
+    } else {
+        commitSummary = `- Commit messages: (none retrieved)`;
+    }
+    
+    const impactLine = `- Impact: ${impact.category} (score ${impact.score.toFixed(0)})`;
+    const typeLine = prType ? `- PR type: ${prType}` : "";
+    
+    // Build reviews section
+    let reviewsSection = "";
+    if (reviews.length > 0) {
+        reviewsSection = `- Reviews (${reviews.length}):\n`;
+        reviews.forEach(review => {
+            reviewsSection += `  • ${review.state} by ${review.reviewer} on ${review.date}\n`;
+        });
+        reviewsSection = reviewsSection.trimEnd();
+    } else {
+        reviewsSection = `- Reviews: (none)`;
     }
 
+    // Compute regression risk if we have PR data
+    let regressionRiskLine = "";
+    if (pr.additions !== undefined && pr.deletions !== undefined) {
+        const regressionRisk = computeRegressionRisk(pr);
+        // Score is between 0-1, so show as percentage
+        regressionRiskLine = `- Regression risk: ${regressionRisk.category} (score ${(regressionRisk.score * 100).toFixed(1)}%)`;
+    }
+    
+    // Combine everything into formatted string
+    const summaryText = [titleLine, lineChange, fileChange, impactLine, typeLine, commitSummary, reviewsSection, regressionRiskLine]
+        .filter(Boolean)
+        .join("\n");
+    
+    // Return object with data for sorting and formatted text
+    return {
+        pr: pr,
+        impact: impact,
+        reviews: reviews,
+        text: summaryText
+    };
+}
+
+// Sort summaries based on criteria
+function sortSummaries(summaries, sortBy) {
+    if (!sortBy) return summaries;
+    
+    summaries.sort((a, b) => {
+        switch(sortBy) {
+            case "lines":
+                return ((b.pr.additions ?? 0) + (b.pr.deletions ?? 0)) -
+                       ((a.pr.additions ?? 0) + (a.pr.deletions ?? 0));
+            case "impact":
+                return (b.impact?.score ?? 0) - (a.impact?.score ?? 0);
+            case "reviews":
+                return (b.reviews?.length ?? 0) - (a.reviews?.length ?? 0);
+            default:
+                return 0;
+        }
+    });
+    
     return summaries;
+}
+
+// Main function: Orchestrates all three passes
+async function formatEvents(events, sortBy = null, limit = null) {
+    // First pass: Collect and group events
+    const prMap = collectPrEvents(events);
+    
+    // Second pass: Enrich with API calls
+    await enrichPrData(prMap);
+    
+    // Third pass: Format all PRs
+    const summaries = [];
+    for (const [key, entry] of prMap) {
+        summaries.push(formatSinglePr(entry));
+    }
+    
+    // Sort and limit
+    sortSummaries(summaries, sortBy);
+    const limitedSummaries = limit ? summaries.slice(0, limit) : summaries;
+    
+    // Return just the text strings
+    return limitedSummaries.map(s => s.text);
 }
 
 // Simple loading spinner
@@ -306,6 +396,8 @@ function typePR(commitMessages = []) {
     return null;
 }
 
+
+
 async function main() {
     if (command === "events") {
         // Start loading indicator
@@ -324,7 +416,7 @@ async function main() {
             
             // Show processing message
             const processing = showLoading("Processing events");
-            const lines = await formatEvents(data);
+            const lines = await formatEvents(data, sortBy, limit);
             processing.stop();
             
             if (lines.length === 0) {
