@@ -1,0 +1,30 @@
+{
+  "name": "pr-review-gitbot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edwinc3107/PR-review-Gitbot.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/edwinc3107/PR-review-Gitbot/issues"
+  },
+  "homepage": "https://github.com/edwinc3107/PR-review-Gitbot#readme",
+  "description": "",
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^16.5.0",
+    "jest": "^30.2.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3"
+  }
+}
