@@ -1,0 +1,10 @@
+# Dependencies
+/node_modules
+# Generated files
+/dist
+.DS_Store
+
+#github tokens
+
+
+.env

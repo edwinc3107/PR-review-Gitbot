@@ -5,6 +5,14 @@ console.log(`Hello, ${username}!`);
 console.log(`Command: ${command}`);
 
 import { getUserEvents } from "./src/github.js";
+import dotenv from 'dotenv';
+dotenv.config();
+
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+if (!GITHUB_TOKEN) {
+    console.error("GITHUB_TOKEN is not set");
+    process.exit(1);
+}
 
 function summarizePR(pr) {
     // 1. Build title line
@@ -36,7 +44,7 @@ function summarizePR(pr) {
     return result;
 }
 
-function formatEvents(events) {
+async function formatEvents(events) {
     //value = { pr, reviews: [] }
     const prMap = new Map();
 
@@ -68,6 +76,7 @@ function formatEvents(events) {
                     reviews: []
                 });
             }
+            
             return;
         }
 
@@ -98,9 +107,27 @@ function formatEvents(events) {
                 date: date
             });
         }
-    });
+    }); 
 
-    // Second pass: format each unique PR with its reviews
+    // Second pass: fetch full PR data if missing additions/deletions/changed_files
+    for (const [key, entry] of prMap) {
+        const pr = entry.pr;
+        const repoName = entry.repoName;
+
+        // Check if PR data is incomplete
+        if (pr.additions === undefined || pr.deletions === undefined || pr.changed_files === undefined) {
+            try {
+                const fullPr = await getFullPr(pr.number, repoName);
+                // Merge full PR data, keeping existing fields that might be present
+                entry.pr = { ...pr, ...fullPr };
+            } catch (err) {
+                console.error(`Could not fetch full PR data for ${repoName}#${pr.number}: ${err.message}`);
+                // Continue with partial data if fetch fails
+            }
+        }
+    }
+
+    // Third pass: format each unique PR with its reviews
     const summaries = [];
     
     for (const [key, { pr, repoName, reviews }] of prMap) {
@@ -166,6 +193,21 @@ function showLoading(message = "Loading") {
     };
 }
 
+async function getFullPr(prNumber, repoFullName) {
+    const url = `https://api.github.com/repos/${repoFullName}/pulls/${prNumber}`;
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'Accept': 'application/vnd.github.v3+json'
+        }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch PR #${prNumber} from ${repoFullName}: ${response.status}`);
+    }
+    const data = await response.json();
+    return data;
+}
+
 async function main() {
     if (command === "events") {
         // Start loading indicator
@@ -184,7 +226,7 @@ async function main() {
             
             // Show processing message
             const processing = showLoading("Processing events");
-            const lines = formatEvents(data);
+            const lines = await formatEvents(data);
             processing.stop();
             
             if (lines.length === 0) {
