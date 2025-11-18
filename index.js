@@ -6,7 +6,13 @@ console.log(`Command: ${command}`);
 
 import { getUserEvents } from "./src/github.js";
 import dotenv from 'dotenv';
-dotenv.config();
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: join(__dirname, '.env') });
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 if (!GITHUB_TOKEN) {
@@ -42,6 +48,18 @@ function summarizePR(pr) {
     // 5. Combine all
     const result = `${titleLine}\n${lineChange}\n${fileChange}\n${commitSummary}`;
     return result;
+}
+
+async function fetchCommitMessages(commitsUrl) {
+    const response = await fetch(commitsUrl, { headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json'}
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch commits: ${response.status}`);
+    }
+
+    const commits = await response.json();
+    return commits.map(commit => commit?.commit?.message.split("\n")[0]);
 }
 
 async function formatEvents(events) {
@@ -125,12 +143,23 @@ async function formatEvents(events) {
                 // Continue with partial data if fetch fails
             }
         }
+
+        // Fetch commits (only once per PR)
+        if (!entry.commitMessages && entry.pr?.commits_url) {
+            try {
+                entry.commitMessages = await fetchCommitMessages(entry.pr.commits_url); //fetch url of commits
+            } catch (err) {
+                console.error(`Could not fetch commits for ${repoName}#${pr.number}: ${err.message}`);
+                entry.commitMessages = [];
+            }
+        }
     }
 
     // Third pass: format each unique PR with its reviews
     const summaries = [];
     
-    for (const [key, { pr, repoName, reviews }] of prMap) {
+    for (const [key, entry] of prMap) {
+        const { pr, repoName, reviews } = entry;
         // Build PR summary
         const prNumber = pr.number ? `PR #${pr.number}` : "PR";
         const title = pr.title || "(no title)";
@@ -151,7 +180,18 @@ async function formatEvents(events) {
             fileChange = `- Files changed: (data not available in event)`;
         }
         
-        const commitSummary = `- Commit messages: (not implemented yet)`;
+        const commitMessages = entry.commitMessages || [];
+        
+        let commitSummary = "";
+        if (commitMessages.length > 0) {
+            commitSummary = `- Commit messages (${commitMessages.length}):\n`;
+            commitMessages.forEach(message => {
+                commitSummary += `  • ${message}\n`;
+            });
+            commitSummary = commitSummary.trimEnd();
+        } else {
+            commitSummary = `- Commit messages: (none retrieved)`;
+        }
         
         // Build reviews section
         let reviewsSection = "";
