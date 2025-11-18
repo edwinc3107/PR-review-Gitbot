@@ -181,6 +181,14 @@ async function formatEvents(events) {
         }
         
         const commitMessages = entry.commitMessages || [];
+        const impact = computeImpactScore({
+            additions: pr.additions,
+            deletions: pr.deletions,
+            changed_files: pr.changed_files,
+            commit_count: commitMessages.length,
+            review_count: reviews.length,
+        });
+        const prType = typePR(commitMessages);
         
         let commitSummary = "";
         if (commitMessages.length > 0) {
@@ -192,6 +200,8 @@ async function formatEvents(events) {
         } else {
             commitSummary = `- Commit messages: (none retrieved)`;
         }
+        const impactLine = `- Impact: ${impact.category} (score ${impact.score.toFixed(0)})`;
+        const typeLine = prType ? `- PR type: ${prType}` : "";
         
         // Build reviews section
         let reviewsSection = "";
@@ -207,7 +217,9 @@ async function formatEvents(events) {
         }
         
         // Combine everything
-        const summary = `${titleLine}\n${lineChange}\n${fileChange}\n${commitSummary}\n${reviewsSection}`;
+        const summary = [titleLine, lineChange, fileChange, impactLine, typeLine, commitSummary, reviewsSection]
+            .filter(Boolean)
+            .join("\n");
         summaries.push(summary);
     }
 
@@ -246,6 +258,52 @@ async function getFullPr(prNumber, repoFullName) {
     }
     const data = await response.json();
     return data;
+}
+
+function computeImpactScore(prMetrics) {
+    const additions = prMetrics.additions ?? 0;
+    const deletions = prMetrics.deletions ?? 0;
+    const changedFiles = prMetrics.changed_files ?? 0;
+    const commitCount = prMetrics.commit_count ?? 0;
+    const reviewCount = prMetrics.review_count ?? 0;
+
+    const score = additions * 0.5 + deletions * 0.25 + changedFiles * 10 + commitCount * 5 + reviewCount * 8;
+
+    if (score < 200) {
+        return { score, category: "Small PR" };
+    } else if (score < 800) {
+        return { score, category: "Medium PR" };
+    }
+    return { score, category: "Large / High-risk PR" };
+}
+
+function typePR(commitMessages = []) {
+    // Combine all commit messages into one string and make it lowercase
+    const allMessages = commitMessages.join(" ").toLowerCase();
+
+    // Check for bug fix keywords
+    if (allMessages.includes("fix") || allMessages.includes("bug") || allMessages.includes("hotfix")) {
+        return "Bug Fix PR";
+    }
+    
+    // Check for refactor keywords
+    if (allMessages.includes("refactor") || allMessages.includes("cleanup")) {
+        return "Refactor PR";
+    }
+    
+    // Check for documentation keywords
+    if (allMessages.includes("docs") || allMessages.includes("readme")) {
+        return "Documentation PR";
+    }
+    
+    // Check for feature keywords
+    if (allMessages.includes("feat") || allMessages.includes("feature") || 
+        allMessages.includes("add") || allMessages.includes("implement")) {
+        return "Feature PR";
+    }
+
+    // No type detected
+    return null;
 }
 
 async function main() {
