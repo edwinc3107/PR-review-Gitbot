@@ -104,7 +104,7 @@ function collectPrEvents(events) {
     return prMap;
 }
 
-function computeRegressionRisk(pr) {
+export function computeRegressionRisk(pr) {
     // Thresholds for regression risk factors
     const LARGE_DIFF_THRESHOLD = 500; // Large PR threshold
     const MANY_FILES_THRESHOLD = 10;  // Many files threshold
@@ -349,7 +349,7 @@ async function getFullPr(prNumber, repoFullName) {
     return data;
 }
 
-function computeImpactScore(prMetrics) {
+export function computeImpactScore(prMetrics) {
     const additions = prMetrics.additions ?? 0;
     const deletions = prMetrics.deletions ?? 0;
     const changedFiles = prMetrics.changed_files ?? 0;
@@ -366,7 +366,7 @@ function computeImpactScore(prMetrics) {
     return { score, category: "Large / High-risk PR" };
 }
 
-function typePR(commitMessages = []) {
+export function typePR(commitMessages = []) {
     // Combine all commit messages into one string and make it lowercase
     const allMessages = commitMessages.join(" ").toLowerCase();
 
@@ -796,7 +796,17 @@ async function main() {
         process.exit(1);
     }
 }
-main();
+
+// Only run main() if this file is executed directly (not imported)
+// Check if running as script (not imported by Jest)
+const isMainModule = process.argv[1] && 
+    (process.argv[1].endsWith('index.js') || 
+     process.argv[1].endsWith('index') ||
+     import.meta.url.endsWith(process.argv[1]));
+
+if (isMainModule && command) {
+    main();
+}
 
 
 //To test the automation:

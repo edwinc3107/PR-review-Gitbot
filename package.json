@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "lint": "eslint .",
-    "test": "jest --passWithNoTests",
-    "test:coverage": "jest --coverage --coverageReporters=json-summary --coverageReporters=text --passWithNoTests"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage --coverageReporters=json-summary --coverageReporters=text --passWithNoTests"
   },
   "repository": {
     "type": "git",
