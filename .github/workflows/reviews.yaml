@@ -1,0 +1,29 @@
+name: PR Review Bot
+on:
+  pull_request:
+    types: [opened, synchronize]
+jobs:
+  review:
+    # 🚨 Critical for posting comments!
+    permissions:
+      pull-requests: write
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js Environment
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Run PR Review Bot Checks
+      run: node index.js review ${{ github.event.pull_request.number }}
+      env: 
+        # Passes the required token to your script
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
