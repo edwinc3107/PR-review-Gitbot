@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "lint": "eslint .",
-    "test": "jest"
+    "test": "jest --passWithNoTests",
+    "test:coverage": "jest --coverage --coverageReporters=json-summary --coverageReporters=text --passWithNoTests"
   },
   "repository": {
     "type": "git",
