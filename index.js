@@ -636,3 +636,9 @@ async function main() {
     }
 }
 main();
+
+
+//To test the automation:
+//I've created a test branch - making these comments as commits on the test branch
+//Then, I've created a PR from the test branch to the main branch
+//The bot should automatically review the PR and post a comment
