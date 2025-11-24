@@ -13,7 +13,7 @@ import { getUserEvents } from "./src/github.js";
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-
+import { execSync } from 'child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -441,12 +441,51 @@ async function getPrReviews(repoFullName, prNumber){
         throw new Error(`Failed to get PR reviews: ${response.status}`);
     }
     const data = await response.json();
-    console.log(data);  //this is the data that was returned from the API
     return data;
 }
 
+// Get list of files changed in the PR
+async function getPrFiles(repoFullName, prNumber) {
+    const url = `https://api.github.com/repos/${repoFullName}/pulls/${prNumber}/files`;
+    
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'Accept': 'application/vnd.github.v3+json'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Failed to get PR files: ${response.status}`);
+    }
+    
+    const files = await response.json();
+    // Return only JavaScript/TypeScript files that need linting
+    return files
+        .filter(file => file.filename.endsWith('.js') || file.filename.endsWith('.ts') || file.filename.endsWith('.jsx') || file.filename.endsWith('.tsx'))
+        .map(file => file.filename);
+}
+
+// Run linting on specific files
+function runLinting(files) {
+    if (files.length === 0) {
+        return { success: true, output: "No JavaScript/TypeScript files to lint", errors: [] };
+    }
+    
+    try {
+        // Run eslint on the specific files
+        const filesStr = files.join(' '); //create a string of the files
+        const output = execSync(`npx eslint ${filesStr}`, {  encoding: 'utf-8', stdio: 'pipe' }); //run the linting on the files
+        return { success: true, output: output || "No linting errors", errors: [] };
+    } catch (error) {
+        // ESLint exits with code 1 if there are errors, but we want the output
+        const errors = error.stdout || error.stderr || error.message;
+        return { success: false, output: errors, errors: errors.split('\n').filter(line => line.trim().length > 0) };
+    }
+}
+
 // This function converts PR analysis into a markdown comment for GitHub
-function formatReviewComment(pr, reviews, commitMessages) {
+function formatReviewComment(pr, reviews, commitMessages, lintResults = null) {
     // Compute all the analysis metrics
     const impact = computeImpactScore({
         additions: pr.additions ?? 0,
@@ -503,7 +542,24 @@ function formatReviewComment(pr, reviews, commitMessages) {
             const reviewer = review.user?.login || "unknown";
             const date = review.submitted_at ? new Date(review.submitted_at).toLocaleDateString() : "unknown date";
             comment += `- **${state}** by @${reviewer} on ${date}\n`;
-        }); //this is the list of reviews for the PR
+        });
+        comment += `\n`;
+    }
+    
+    // Linting results
+    if (lintResults) {
+        comment += `### Code Quality\n\n`;
+        if (lintResults.success) {
+            comment += `**Linting:** Passed\n`;
+            if (lintResults.output && lintResults.output !== "No linting errors" && lintResults.output !== "No JavaScript/TypeScript files to lint") {
+                comment += `\n\`\`\`\n${lintResults.output}\n\`\`\`\n`;
+            }
+        } else {
+            comment += `**Linting:** Failed\n\n`;
+            comment += `<details>\n<summary>Click to see linting errors</summary>\n\n`;
+            comment += `\`\`\`\n${lintResults.output}\n\`\`\`\n`;
+            comment += `</details>\n`;
+        }
         comment += `\n`;
     }
     
@@ -605,12 +661,25 @@ async function main() {
             commitMessages = []; // Continue with empty commits if fetch fails
         }
         
-        //4. Format comment (analysis is done inside formatReviewComment)
+        //4. Get PR files and run linting
+        const lintingLoading = showLoading("Running linting checks");
+        let lintResults = null;
+        try {
+            const prFiles = await getPrFiles(repoFullName, prNumber);
+            lintResults = runLinting(prFiles);
+            lintingLoading.stop();
+        } catch (error) {
+            lintingLoading.stop();
+            console.error(`Failed to run linting: ${error.message}`);
+            // Continue without linting results
+        }
+        
+        //5. Format comment (analysis is done inside formatReviewComment)
         const formattingLoading = showLoading("Formatting review comment");
-        const formattedComment = formatReviewComment(prData, reviews, commitMessages);
+        const formattedComment = formatReviewComment(prData, reviews, commitMessages, lintResults);
         formattingLoading.stop();
         
-        //5. Post comment
+        //6. Post comment
         const postingLoading = showLoading("Posting comment to PR");
         let posted;
         try {
