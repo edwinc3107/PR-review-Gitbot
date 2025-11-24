@@ -4,7 +4,8 @@
 /dist
 .DS_Store
 
+# Test coverage
+/coverage
+
 #github tokens
-
-
 .env
