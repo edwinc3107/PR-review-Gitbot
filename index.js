@@ -159,7 +159,7 @@ function computeRegressionRisk(pr) {
 
 // Second pass: Enrich PR data with API calls
 async function enrichPrData(prMap) {
-    for (const [key, entry] of prMap) {
+    for (const [_key, entry] of prMap) {
         const pr = entry.pr;
         const repoName = entry.repoName;
 
@@ -302,7 +302,7 @@ async function formatEvents(events, sortBy = null, limit = null) {
     
     // Third pass: Format all PRs
     const summaries = [];
-    for (const [key, entry] of prMap) {
+    for (const [_key, entry] of prMap) {
         summaries.push(formatSinglePr(entry));
     }
     

@@ -1,4 +1,6 @@
 //file to read from the terminal
+import { getUserEvents } from "./github.js";
+
 const command = process.argv[2];
 const username = process.argv[3];
 console.log(`Hello, ${username}!`);
