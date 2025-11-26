@@ -660,7 +660,6 @@ function failJob(message) {
 
 const REQUIRED_TEMPLATE_FIELDS = [
     "## Description",
-    "##HAMSTER SUMMARY",
     "## Testing Checklist",
     "- [ ] I have tested locally",
     "- [ ] I have updated docs"
