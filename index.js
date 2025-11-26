@@ -666,7 +666,8 @@ const REQUIRED_TEMPLATE_FIELDS = [
 ];
 
 function enforcePrTemplate(prBody = "") {
-    const missing = REQUIRED_TEMPLATE_FIELDS.filter(token => !prBody.includes(token));
+    const normalizedBody = typeof prBody === "string" ? prBody : "";
+    const missing = REQUIRED_TEMPLATE_FIELDS.filter(token => !normalizedBody.includes(token));
     return { ok: missing.length === 0, missing };
 }
 
