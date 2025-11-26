@@ -3,6 +3,10 @@ const command = process.argv[2];
 const username = process.argv[3]; // Only used for "events" command
 
 const args = process.argv.slice(4);
+
+
+
+
 const limitArg = args.find(arg => arg.startsWith("limit="))?.split("=")[1];
 const sortByArg = args.find(arg => arg.startsWith("sort="))?.split("=")[1];
 
@@ -649,13 +653,28 @@ function runTestCoverage() {
     }
 }
 
+function failJob(message) {
+    console.error(message);
+    process.exit(1);
+}
+
+const REQUIRED_TEMPLATE_FIELDS = [
+    "## Description",
+];
+
+function enforcePrTemplate(prBody = "") {
+    const normalizedBody = typeof prBody === "string" ? prBody : "";
+    const missing = REQUIRED_TEMPLATE_FIELDS.filter(token => !normalizedBody.includes(token));
+    return { ok: missing.length === 0, missing };
+}
+
 async function main() {
-    if (command === "events") {
+if (command === "events") {
         // Start loading indicator
         const loading = showLoading("Fetching events");
         
-        try {
-            const data = await getUserEvents(username);
+    try {
+        const data = await getUserEvents(username);
             
             // Stop loading and process data
             loading.stop();
@@ -690,26 +709,37 @@ async function main() {
         //Fetch PR → Fetch reviews → Fetch commits → Analyze → Format → Post
         //1. Fetch PR data          
         const prNumber = process.argv[3];
-        
-        // Get repository name from GitHub Actions (or .env for local testing)
         const repoFullName = process.env.GITHUB_REPOSITORY;
-        if (!repoFullName) {
-            console.error("GITHUB_REPOSITORY environment variable not set");
-            console.error("In GitHub Actions, this is set automatically.");
-            console.error("For local testing, add GITHUB_REPOSITORY=owner/repo to your .env file");
-            process.exit(1);
+        const token = process.env.GITHUB_TOKEN;
+
+
+        if (!prNumber) {
+            failJob("Missing PR number. Usage: node index.js review <pr-number>");
         }
-        
-        // Extract owner from "owner/repo" format
-        const owner = repoFullName.split("/")[0];
-        if (!owner) {
-            console.error("Invalid GITHUB_REPOSITORY format. Expected: owner/repo");
-            process.exit(1);
+        if (!repoFullName || !repoFullName.includes("/")) {
+            failJob("GITHUB_REPOSITORY is missing or malformed (expected owner/repo).");
+        }
+        if (!token) {
+            failJob("GITHUB_TOKEN not set. In Actions add env: GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
         }
         const loading = showLoading("Fetching PR data");
         let prData;
         try {
             prData = await getFullPr(prNumber, repoFullName);
+            const templateCheck = enforcePrTemplate(prData.body);
+            if (!templateCheck.ok) {
+                const message = [
+                    "PR template incomplete. Please fill out the missing sections before rerunning checks.",
+                    "Missing:",
+                    ...templateCheck.missing.map(item => `- ${item}`)
+                  ].join("\n");
+                
+                  await addComments(prNumber, ` ${message}`, repoFullName)
+                    .catch(err => console.error("Failed to post template warning:", err.message));
+                
+                  failJob("Stopped early: PR template not filled out.");
+            }
+            console.log("PR template is valid");
             loading.stop();
         }
         catch (error) {
@@ -782,14 +812,14 @@ async function main() {
             } else {
                 console.error("Failed to post comment");
             }
-        } catch (error) {
+    } catch (error) {
             postingLoading.stop();
             console.error(`Failed to post comment: ${error.message}`);
             process.exit(1);
-        }
+    }
         
-        console.log("done");
-        process.exit(0);    
+    console.log("done");
+    process.exit(0);
     }
     else {
         console.error("Invalid command. Use 'events' or 'review'");
@@ -805,7 +835,7 @@ const isMainModule = process.argv[1] &&
      import.meta.url.endsWith(process.argv[1]));
 
 if (isMainModule && command) {
-    main();
+main();
 }
 
 
