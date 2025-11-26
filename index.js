@@ -660,9 +660,6 @@ function failJob(message) {
 
 const REQUIRED_TEMPLATE_FIELDS = [
     "## Description",
-    "## Testing Checklist",
-    "- [ ] I have tested locally",
-    "- [ ] I have updated docs"
 ];
 
 function enforcePrTemplate(prBody = "") {
