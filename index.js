@@ -658,6 +658,19 @@ function failJob(message) {
     process.exit(1);
 }
 
+const REQUIRED_TEMPLATE_FIELDS = [
+    "## Description",
+    "##HAMSTER SUMMARY",
+    "## Testing Checklist",
+    "- [ ] I have tested locally",
+    "- [ ] I have updated docs"
+];
+
+function enforcePrTemplate(prBody = "") {
+    const missing = REQUIRED_TEMPLATE_FIELDS.filter(token => !prBody.includes(token));
+    return { ok: missing.length === 0, missing };
+}
+
 async function main() {
 if (command === "events") {
         // Start loading indicator
@@ -716,6 +729,20 @@ if (command === "events") {
         let prData;
         try {
             prData = await getFullPr(prNumber, repoFullName);
+            const templateCheck = enforcePrTemplate(prData.body);
+            if (!templateCheck.ok) {
+                const message = [
+                    "PR template incomplete. Please fill out the missing sections before rerunning checks.",
+                    "Missing:",
+                    ...templateCheck.missing.map(item => `- ${item}`)
+                  ].join("\n");
+                
+                  await addComments(prNumber, ` ${message}`, repoFullName)
+                    .catch(err => console.error("Failed to post template warning:", err.message));
+                
+                  failJob("Stopped early: PR template not filled out.");
+            }
+            console.log("PR template is valid");
             loading.stop();
         }
         catch (error) {
